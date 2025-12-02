@@ -135,6 +135,14 @@ const currentContext = getContext();
 console.log('Current context:', currentContext);
 ```
 
+### Custom Fields
+
+You can set arbitrary key/value pairs as custom fields for the current session. These will be sent to the backend.
+
+```javascript
+// Set or update a custom field for this session
+WebChat.setCustomField('name', 'Ada Lovelace');
+```
 
 ### Additional Examples
 

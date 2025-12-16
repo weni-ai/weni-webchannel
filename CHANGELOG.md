@@ -2,12 +2,6 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## [2.27.1] (2025-12-16)
-
-### Bug Fixes
-
-* fix: sends custom fields in the first message when the contact has not yet been created
-
 ## [2.27.0] (2025-12-02)
 
 ### Features

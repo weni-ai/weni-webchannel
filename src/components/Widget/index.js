@@ -130,8 +130,6 @@ class Widget extends Component {
     };
     this.isReadyToSendMessage = false;
     this.messagesWaitingToBeSent = [];
-    this.pendingCustomFields = {};
-    this.hasPreviousMessages = false;
   }
 
   state = {
@@ -414,23 +412,6 @@ class Widget extends Component {
 
     if (receivedMessage.type === 'ready_for_message') {
       this.isReadyToSendMessage = true;
-
-      const historyFromReady = Array.isArray(receivedMessage.data.history) ? receivedMessage.data.history : [];
-      this.hasPreviousMessages = historyFromReady.length > 0;
-
-      if (this.hasPreviousMessages && Object.keys(this.pendingCustomFields).length > 0) {
-        Object.entries(this.pendingCustomFields).forEach(([key, value]) => {
-          const payload = {
-            type: 'set_custom_field',
-            data: { key, value }
-          };
-          const sendCustomField = () => {
-            this.props.dispatch(emitUserMessage(payload));
-          };
-          sendCustomField();
-        });
-        this.pendingCustomFields = {};
-      }
 
       this.messagesWaitingToBeSent.forEach((sendMessage) => {
         sendMessage();
@@ -1037,20 +1018,8 @@ class Widget extends Component {
         this.props.dispatch(addUserMessage(textMessage.message.text));
 
         const sendMessage = () => {
-          let payloadToSend = textMessage;
-
-          if (!this.hasPreviousMessages && Object.keys(this.pendingCustomFields).length > 0) {
-            payloadToSend = {
-              type: 'message_with_fields',
-              message: textMessage.message,
-              data: { ...this.pendingCustomFields }
-            };
-            this.hasPreviousMessages = true;
-            this.pendingCustomFields = {};
-          }
-
-          this.props.dispatch(emitUserMessage(payloadToSend));
-          this.emitSocketEvent('outgoingMessage', payloadToSend);
+          this.props.dispatch(emitUserMessage(textMessage));
+          this.emitSocketEvent('outgoingMessage', textMessage);
         }
 
         if (this.isReadyToSendMessage) {
@@ -1075,20 +1044,8 @@ class Widget extends Component {
             };
 
             const sendMessage = () => {
-              let payloadToSend = attachmentMessage;
-
-              if (!this.hasPreviousMessages && Object.keys(this.pendingCustomFields).length > 0) {
-                payloadToSend = {
-                  type: 'message_with_fields',
-                  message: attachmentMessage.message,
-                  data: { ...this.pendingCustomFields }
-                };
-                this.hasPreviousMessages = true;
-                this.pendingCustomFields = {};
-              }
-
-              this.props.dispatch(emitUserMessage(payloadToSend));
-              this.emitSocketEvent('outgoingMessage', payloadToSend);
+              this.props.dispatch(emitUserMessage(attachmentMessage));
+              this.emitSocketEvent('outgoingMessage', attachmentMessage);
             }
 
             if (this.isReadyToSendMessage) {
@@ -1113,28 +1070,22 @@ class Widget extends Component {
   }
 
   setCustomField(key, value) {
-    this.pendingCustomFields[key] = value;
-
-    if (this.hasPreviousMessages) {
-      const payload = {
-        type: 'set_custom_field',
-        data: {
-          key,
-          value,
-        }
-      };
-
-      const sendCustomField = () => {
-        this.props.dispatch(emitUserMessage(payload));
-      };
-
-      if (this.isReadyToSendMessage) {
-        sendCustomField();
-      } else {
-        this.messagesWaitingToBeSent.push(sendCustomField);
+    const payload = {
+      type: 'set_custom_field',
+      data: {
+        key,
+        value,
       }
+    };
 
-      delete this.pendingCustomFields[key];
+    const sendCustomField = () => {
+      this.props.dispatch(emitUserMessage(payload));
+    };
+
+    if (this.isReadyToSendMessage) {
+      sendCustomField();
+    } else {
+      this.messagesWaitingToBeSent.push(sendCustomField);
     }
   }
 

@@ -103,6 +103,10 @@ class Widget extends Component {
     this.typingTimeoutId = null;
     this.hasUserOpenedChat = false;
     this.reconnectImmediate = false;
+    this.reconnectAttempts = 0;
+    this.recoveryInProgress = false;
+    this.skipRegisterOnNextOpen = false;
+    this.recoveryFallbackTimeout = null;
     this.clientMessageMap = {
       text: insertUserMessage,
       image: insertUserImage,
@@ -214,6 +218,11 @@ class Widget extends Component {
     if (this.reconnectionTimeout) {
       clearTimeout(this.reconnectionTimeout);
       this.reconnectionTimeout = null;
+    }
+
+    if (this.recoveryFallbackTimeout) {
+      clearTimeout(this.recoveryFallbackTimeout);
+      this.recoveryFallbackTimeout = null;
     }
 
     if (socket) {
@@ -414,6 +423,12 @@ class Widget extends Component {
 
     if (receivedMessage.type === 'ready_for_message') {
       this.isReadyToSendMessage = true;
+      this.reconnectAttempts = 0;
+      this.recoveryInProgress = false;
+      if (this.recoveryFallbackTimeout) {
+        clearTimeout(this.recoveryFallbackTimeout);
+        this.recoveryFallbackTimeout = null;
+      }
 
       const historyFromReady = Array.isArray(receivedMessage.data.history) ? receivedMessage.data.history : [];
       this.hasPreviousMessages = historyFromReady.length > 0;
@@ -498,11 +513,19 @@ class Widget extends Component {
       dispatch(setMessagesScroll(true));
       this.dispatchAckAttachment(receivedMessage.message);
     } else if (receivedMessage.type === 'error') {
-      if (receivedMessage.error === 'unable to register: client from already exists') {
+      const errMsg = receivedMessage.error || '';
+      if (errMsg === 'unable to register: client from already exists') {
         console.log('%cSOCKET RECEIVED ERROR - already exists', 'color: #F71963; font-weight: bold;', new Date());
 
         this.props.socket.socket.removeEventListener('close', socketOnCloseListener);
         this.forceChatConnection();
+      } else if (errMsg.startsWith('unable to register:')) {
+        console.log('%cSOCKET RECEIVED ERROR - register failed', 'color: #F71963; font-weight: bold;', new Date());
+        console.log(errMsg);
+
+        this.forceNewSession = true;
+        this.reconnectImmediate = true;
+        this.props.socket.socket.close();
       }
     } else if (receivedMessage.type === 'warning') {
       if (receivedMessage.warning === 'Connection closed by request') {
@@ -510,9 +533,19 @@ class Widget extends Component {
 
         console.log('%cSOCKET RECEIVED WARNING - closed by request', 'color: #F71963; font-weight: bold;', new Date());
 
-        this.props.dispatch(openSessionMessage());
-        this.props.socket.socket.removeEventListener('close', socketOnCloseListener);
-        this.props.socket.socket.close();
+        if (this.recoveryFallbackTimeout) {
+          clearTimeout(this.recoveryFallbackTimeout);
+          this.recoveryFallbackTimeout = null;
+        }
+
+        if (this.recoveryInProgress) {
+          this.reconnectImmediate = true;
+          this.props.socket.socket.close();
+        } else {
+          this.props.dispatch(openSessionMessage());
+          this.props.socket.socket.removeEventListener('close', socketOnCloseListener);
+          this.props.socket.socket.close();
+        }
       }
     } else if (receivedMessage.type === 'forbidden') {
       this.canReconnect = false;
@@ -797,13 +830,17 @@ class Widget extends Component {
         console.log('%cSOCKET ONOPEN', 'color: #F71963; font-weight: bold;', new Date());
 
         if (!that.connected || that.attemptingReconnection) {
-          that.startConnection(
-            this,
-            that.forceNewSession || (!that.attemptingReconnection && sendInitPayload),
-            options,
-            localId,
-            uniqueFrom
-          );
+          if (that.skipRegisterOnNextOpen) {
+            that.skipRegisterOnNextOpen = false;
+          } else {
+            that.startConnection(
+              this,
+              that.forceNewSession || (!that.attemptingReconnection && sendInitPayload),
+              options,
+              localId,
+              uniqueFrom
+            );
+          }
           that.pingIntervalId = setInterval(() => {
             that.pingSocket();
           }, 50000);
@@ -1154,6 +1191,9 @@ class Widget extends Component {
   }
 
   forceChatConnection() {
+    this.recoveryInProgress = true;
+    this.skipRegisterOnNextOpen = true;
+
     afterOnOpen = () => {
       const { sessionToken, socket } = this.props;
 
@@ -1167,8 +1207,18 @@ class Widget extends Component {
       }
 
       socket.socket.send(JSON.stringify(options));
-      this.reconnectImmediate = true;
-      socket.socket.close();
+
+      if (this.recoveryFallbackTimeout) {
+        clearTimeout(this.recoveryFallbackTimeout);
+      }
+      this.recoveryFallbackTimeout = setTimeout(() => {
+        this.recoveryFallbackTimeout = null;
+        if (this.recoveryInProgress && socket.socket && socket.socket.readyState !== 3) {
+          console.log('%cSOCKET RECOVERY FALLBACK', 'color: #F71963; font-weight: bold;', new Date());
+          this.reconnectImmediate = true;
+          socket.socket.close();
+        }
+      }, 3000);
     };
 
     this.attemptingReconnection = true;
